@@ -11,3 +11,4 @@ __pycache__/
 *.pt
 *.ckpt
 .DS_Stor
+py312_env/
