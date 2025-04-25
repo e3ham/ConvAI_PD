@@ -243,6 +243,7 @@ bash# Edit whisper.yaml to include class weights:
 #   weight: !new:torch.Tensor [[0.3, 0.7]]
 
 # Then run:
+```bash
 python whisper.py whisper.yaml
 Experiment 2: Training with Augmented Data
 To train with the augmented dataset:
@@ -251,13 +252,16 @@ python whisper.py whisper.yaml \
   --train_annotation aug_manifests/train.json \
   --valid_annotation aug_manifests/valid.json \
   --test_annotation aug_manifests/test.json
+```
 
 # To start fresh (removing existing checkpoints)
+```bash
 python whisper.py whisper.yaml --fresh_start
 Customizing Training
 Key parameters in whisper.yaml you may want to modify:
 yaml# Model size
 whisper_source: "openai/whisper-base"  # Options: tiny, base, small, medium
+```
 
 # Training parameters
 number_of_epochs: 10
@@ -266,6 +270,7 @@ lr: 0.0001
 lr_ssl: 0.00001
 
 # Whether to freeze the Whisper encoder
+```bash
 freeze_ssl: True  # Set to False to fine-tune
 Task-Specific Models
 For training on specific tasks:
@@ -276,14 +281,17 @@ python whisper.py whisper.yaml \
   --test_annotation task_separated/reading_manifests/test.json \
   --data_folder task_separated/reading_task \
   --output_folder results/models/whisper_reading
+```
 
 # Other tasks model
+```bash
 python whisper.py whisper.yaml \
   --train_annotation task_separated/other_manifests/train.json \
   --valid_annotation task_separated/other_manifests/valid.json \
   --test_annotation task_separated/other_manifests/test.json \
   --data_folder task_separated/other_task \
   --output_folder results/models/whisper_other
+```
 Results Interpretation
 After training, results are saved in the output folder (default: results/models/whisper/1986/):
 results/models/whisper/1986/
