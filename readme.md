@@ -221,6 +221,91 @@ def audio_pipeline(path):
         return torch.zeros(16000)  # Return dummy signal
 ```
 
+Running Models
+We provide implementations for two experimental setups: a baseline multimodal model combining Whisper embeddings with acoustic features, and a version using data augmentation.
+Environment Setup
+First, ensure you have the required dependencies:
+bashpip install speechbrain torchaudio matplotlib numpy pandas scikit-learn praat-parselmouth
+Experiment 1: Baseline Multimodal Model
+The baseline model combines Whisper embeddings with acoustic features (pitch, jitter, shimmer):
+bash# Navigate to the implementation directory
+cd whisper_acoustic_features
+
+# Train the baseline model
+python whisper.py whisper.yaml
+
+# To run with a specific seed
+python whisper.py whisper.yaml --seed 1986
+Class-Weighted Variant
+To address class imbalance, we can run the model with class weighting:
+bash# Edit whisper.yaml to include class weights:
+# compute_cost: !new:torch.nn.CrossEntropyLoss
+#   weight: !new:torch.Tensor [[0.3, 0.7]]
+
+# Then run:
+python whisper.py whisper.yaml
+Experiment 2: Training with Augmented Data
+To train with the augmented dataset:
+bash# Use augmented manifests
+python whisper.py whisper.yaml \
+  --train_annotation aug_manifests/train.json \
+  --valid_annotation aug_manifests/valid.json \
+  --test_annotation aug_manifests/test.json
+
+# To start fresh (removing existing checkpoints)
+python whisper.py whisper.yaml --fresh_start
+Customizing Training
+Key parameters in whisper.yaml you may want to modify:
+yaml# Model size
+whisper_source: "openai/whisper-base"  # Options: tiny, base, small, medium
+
+# Training parameters
+number_of_epochs: 10
+batch_size: 8
+lr: 0.0001
+lr_ssl: 0.00001
+
+# Whether to freeze the Whisper encoder
+freeze_ssl: True  # Set to False to fine-tune
+Task-Specific Models
+For training on specific tasks:
+bash# Reading task model
+python whisper.py whisper.yaml \
+  --train_annotation task_separated/reading_manifests/train.json \
+  --valid_annotation task_separated/reading_manifests/valid.json \
+  --test_annotation task_separated/reading_manifests/test.json \
+  --data_folder task_separated/reading_task \
+  --output_folder results/models/whisper_reading
+
+# Other tasks model
+python whisper.py whisper.yaml \
+  --train_annotation task_separated/other_manifests/train.json \
+  --valid_annotation task_separated/other_manifests/valid.json \
+  --test_annotation task_separated/other_manifests/test.json \
+  --data_folder task_separated/other_task \
+  --output_folder results/models/whisper_other
+Results Interpretation
+After training, results are saved in the output folder (default: results/models/whisper/1986/):
+results/models/whisper/1986/
+├── save/               # Model checkpoints
+├── plots/              # Performance visualizations
+│   ├── loss_curves.png              # Training/validation curves
+│   ├── confusion_matrix.png         # Test set confusion matrix
+│   ├── demographic_epoch_*.png      # Performance by demographic
+│   ├── sex_performance.png          # Male vs. female accuracy
+│   └── dataset_performance.png      # HC vs. PD accuracy trends 
+├── train_log.txt       # Training progress log
+├── train_losses.json   # Training loss values
+└── test_error.json     # Final test error rate
+Key metrics to examine:
+
+Overall test accuracy (test_error.json)
+Class-specific performance (HC vs. PD accuracy)
+Demographic performance patterns (age, gender)
+Training/validation loss curves (for convergence and overfitting)
+
+Our baseline model achieved 62.21% overall accuracy with 93.33% HC and 45.54% PD accuracy. The class-weighted variant improved to 68.60% overall with more balanced 61.67% HC and 72.32% PD accuracy.
+
 ## Troubleshooting
 
 ### Missing Files
