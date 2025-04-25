@@ -1,0 +1,13 @@
+aug_manifests/
+augmented_data/
+manifests/
+pd_dataset/
+results/
+task_separated/
+whisper_acoustic_features/
+__pycache__/
+*.pyc
+*.pkl
+*.pt
+*.ckpt
+.DS_Stor

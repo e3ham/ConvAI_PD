@@ -1,0 +1,110 @@
+# Reproducible settings
+seed: 2025
+__set_seed: !!python/object/apply:torch.manual_seed [!ref <seed>]
+
+# # Paths to JSON manifest files
+# train_annotation: "aug_manifests/train.json"
+# valid_annotation: "aug_manifests/valid.json"
+# test_annotation:  "aug_manifests/test.json"
+
+# data_root: "augmented_data" 
+
+# Paths to JSON manifest files
+train_annotation: "task_separated/other_manifests/train.json"
+valid_annotation: "task_separated/other_manifests/valid.json"
+test_annotation: "task_separated/other_manifests/test.json"
+data_root: "task_separated/other_task"
+
+# Output folders and logging
+output_folder: results/ecapa_tdnn_pd_detection_manifest/<seed>
+save_folder: !ref <output_folder>/save
+train_log: !ref <output_folder>/train_log.txt
+
+# DataLoader options
+batch_size: 16
+shuffle: True
+
+dataloader_options:
+  batch_size: !ref <batch_size>
+  shuffle: True
+
+# Training logger
+train_logger: !new:speechbrain.utils.train_logger.FileTrainLogger
+  save_file: !ref <train_log>
+
+# # Metrics for evaluation
+# error_stats: !name:speechbrain.utils.metric_stats.MetricStats
+#     metric: !name:speechbrain.nnet.losses.classification_error
+#         reduction: batch
+
+error_stats: !name:speechbrain.utils.metric_stats.ClassificationStats
+
+
+# Feature parameters
+sample_rate: 16000
+n_mels:      80
+
+# Model hyper-parameters
+dim_emb:     192
+n_classes:   2
+number_of_epochs: 10
+lr_start:    0.001
+lr_final:    0.0001
+
+# Feature extraction module
+compute_features: !new:torchaudio.transforms.MelSpectrogram
+  sample_rate: !ref <sample_rate>
+  n_fft:       512
+  win_length:  400
+  hop_length:  160
+  n_mels:      !ref <n_mels>
+  f_min:       0
+  f_max:       8000
+
+# Input normalization
+mean_var_norm: !new:speechbrain.processing.features.InputNormalization
+  norm_type: global
+
+# Embedding model (ECAPA-TDNN)
+embedding_model: !new:speechbrain.lobes.models.ECAPA_TDNN.ECAPA_TDNN
+  input_size: !ref <n_mels>
+  lin_neurons: !ref <dim_emb>
+
+# Classifier on top of embeddings
+classifier: !new:speechbrain.lobes.models.ECAPA_TDNN.Classifier
+  input_size: !ref <dim_emb>
+  device: cpu
+  lin_blocks: 0
+  lin_neurons: !ref <dim_emb>
+  out_neurons: !ref <n_classes>
+
+# Epoch counter for resuming training
+epoch_counter: !new:speechbrain.utils.epoch_loop.EpochCounter
+  limit: !ref <number_of_epochs>
+
+# Group modules for Brain
+modules:
+  compute_features: !ref <compute_features>
+  mean_var_norm:    !ref <mean_var_norm>
+  embedding_model:  !ref <embedding_model>
+  classifier:       !ref <classifier>
+
+# Optimizer class (will be instantiated by Brain)
+opt_class: !name:torch.optim.Adam
+  lr: !ref <lr_start>
+  weight_decay: 1e-4
+
+# Learning-rate scheduler (linear decay)
+lr_annealing: !new:speechbrain.nnet.schedulers.LinearScheduler
+  initial_value: !ref <lr_start>
+  final_value:   !ref <lr_final>
+  epoch_count:   !ref <number_of_epochs>
+
+# Checkpointer configuration (with explicit recoverables)
+checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
+  checkpoints_dir: !ref <save_folder>
+  recoverables:
+    embedding_model: !ref <embedding_model>
+    classifier:      !ref <classifier>
+    normalizer:      !ref <mean_var_norm>
+    counter:         !ref <epoch_counter>
