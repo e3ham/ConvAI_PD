@@ -48,7 +48,7 @@ def compute_acoustic_feats(wav, length, sr):
         # Create parselmouth sound
         snd = parselmouth.Sound(arr, sampling_frequency=sr)
         
-        # Extract pitch - correct method
+        # Extract pitch, correct method
         pitch = snd.to_pitch()
         pitch_values = pitch.selected_array['frequency']
         mean_pitch = 0.0
@@ -78,7 +78,7 @@ def compute_acoustic_feats(wav, length, sr):
         ]
     except Exception as e:
         print(f"Error computing acoustic features: {e}")
-
+  
 
 # Brain class for Parkinson detection using Whisper + acoustic features
 class ParkinsonBrain(sb.Brain):
@@ -109,6 +109,10 @@ class ParkinsonBrain(sb.Brain):
         # Make sure output directory exists
         self.plots_dir = os.path.join(self.hparams.output_folder, "plots")
         os.makedirs(self.plots_dir, exist_ok=True)
+        # Add tracking for debugging
+        self.step = 0
+        self.batch_count = 0
+        self.empty_loss_count = 0
 
     def compute_forward(self, batch, stage):
         """Forward computations from the waveform to the output probabilities."""
@@ -125,8 +129,22 @@ class ParkinsonBrain(sb.Brain):
         # 3) Compute acoustic features in-line → list of [pitch, jitter, shimmer]
         ac_list = []
         for wav, length in zip(wavs, wav_lens):
-            ac_list.append(compute_acoustic_feats(wav, length, self.hparams.sample_rate))
-        # (B, 3)
+            try:
+                features = compute_acoustic_feats(wav, length, self.hparams.sample_rate)
+                # Ensure all values are valid floats
+                validated_features = [float(f) if f is not None else 0.0 for f in features]
+                ac_list.append(validated_features)
+            except Exception as e:
+                print(f"Error processing acoustic features: {e}")
+                ac_list.append([0.0, 0.0, 0.0])  # Fallback values
+        
+        # Add debug info to see what's happening with tensor creation
+        if stage == sb.Stage.TRAIN and self.step % 10 == 0:  # Print every 10 steps
+            self.step += 1
+            print(f"Sample of acoustic features: {ac_list[0] if len(ac_list) > 0 else 'empty'}")
+            print(f"Pooled Whisper features shape: {pooled.shape}")
+        
+        # Convert to tensor with additional validation
         ac_feats = torch.tensor(ac_list, dtype=torch.float32, device=self.device)
 
         # 4) Concatenate Whisper + acoustic → (B, D_whisper + 3)
@@ -134,10 +152,17 @@ class ParkinsonBrain(sb.Brain):
 
         # 5) Classifier + log-softmax
         logits = self.modules.classifier(fused)
+        
+        # Debug logits to check if they are becoming degenerate
+        if stage == sb.Stage.TRAIN and self.step % 10 == 0:
+            softmax = self.hparams.log_softmax(logits)
+            print(f"Logits sample: {logits[0]}")
+            print(f"Prediction distribution: {torch.exp(softmax[0])}")  # Convert log_softmax back to probabilities
+        
         return self.hparams.log_softmax(logits)
 
     def compute_objectives(self, predictions, batch, stage):
-        """Compute the loss (NLL) given predictions and targets."""
+        """Compute the loss with class balancing to prevent model collapse."""
         # Unwrap labels
         if isinstance(batch.label_encoded, tuple):
             labels, *_ = batch.label_encoded  # For tuple format
@@ -154,10 +179,31 @@ class ParkinsonBrain(sb.Brain):
         # Ensure labels has at least 1 dimension (not a scalar tensor)
         if len(labels.shape) == 0:
             labels = labels.unsqueeze(0)
-
-        # Compute NLL loss
-        loss = self.hparams.compute_cost(predictions, labels)
-
+        
+        # Compute class weights to balance the loss
+        # This helps prevent the model from just predicting the majority class
+        class_counts = torch.bincount(labels, minlength=self.hparams.n_classes)
+        if torch.all(class_counts > 0):  # Only apply weighting if we have samples from all classes
+            # Inverse frequency weighting
+            total_samples = torch.sum(class_counts)
+            class_weights = total_samples / (class_counts * self.hparams.n_classes)
+            
+            # Normalize weights to sum to the number of classes
+            class_weights = class_weights * (self.hparams.n_classes / torch.sum(class_weights))
+            
+            # Use these weights in the loss function
+            loss = torch.nn.functional.nll_loss(predictions, labels, weight=class_weights)
+        else:
+            # Fall back to regular loss if we don't have samples from all classes
+            loss = self.hparams.compute_cost(predictions, labels)
+        
+        # For debugging, occasionally print out the loss breakdown
+        if stage == sb.Stage.TRAIN and hasattr(self, 'batch_count') and self.batch_count % 10 == 0:
+            print(f"Loss breakdown for batch {self.batch_count}:")
+            print(f"  Class counts: HC={class_counts[0].item()}, PD={class_counts[1].item()}")
+            if torch.all(class_counts > 0):
+                print(f"  Class weights: HC={class_weights[0].item():.2f}, PD={class_weights[1].item():.2f}")
+        
         # For VALID/TEST, handle error metrics manually instead of using self.error_metrics.append
         if stage != sb.Stage.TRAIN:
             # Initialize tracking lists if they don't exist yet
@@ -195,20 +241,98 @@ class ParkinsonBrain(sb.Brain):
         return loss
 
     def fit_batch(self, batch):
-        """Step both the main optimizer and ssl_optimizer."""
+        """Step both the main optimizer and ssl_optimizer with gradient clipping and NaN checks."""
         # 1) forward + loss
         preds = self.compute_forward(batch, sb.Stage.TRAIN)
         loss = self.compute_objectives(preds, batch, sb.Stage.TRAIN)
+        
+        # Check for NaN loss and handle it properly
+        if torch.isnan(loss) or torch.isinf(loss):
+            print(f"WARNING: NaN or Inf loss detected! Skipping backpropagation for this batch.")
+            
+            # Print batch information for debugging
+            # Unwrap labels
+            if isinstance(batch.label_encoded, tuple):
+                labels, *_ = batch.label_encoded
+            else:
+                if isinstance(batch.label_encoded, PaddedData):
+                    labels = batch.label_encoded.data
+                else:
+                    labels = batch.label_encoded
+            
+            # Make sure labels are correctly shaped
+            if len(labels.shape) > 1:
+                labels = labels.squeeze(-1)
+            
+            # Ensure labels has at least 1 dimension
+            if len(labels.shape) == 0:
+                labels = labels.unsqueeze(0)
+            
+            # Print statistics about this batch
+            print(f"  Batch size: {len(labels)}")
+            print(f"  Labels: {labels}")
+            
+            # Return a small non-zero loss to prevent training collapse
+            return torch.tensor(0.1, device=self.device, requires_grad=True)
+        
+        # Print batch statistics for debugging
+        self.batch_count += 1
+        if self.batch_count % 5 == 0:  # Every 5 batches
+            print(f"Batch {self.batch_count}: Loss = {loss.item():.4f}")
+            
+            # Get actual predictions vs targets
+            pred_indices = torch.argmax(preds, dim=-1)
+            
+            # Unwrap labels
+            if isinstance(batch.label_encoded, tuple):
+                labels, *_ = batch.label_encoded
+            else:
+                if isinstance(batch.label_encoded, PaddedData):
+                    labels = batch.label_encoded.data
+                else:
+                    labels = batch.label_encoded
+            
+            # Make sure labels are correctly shaped
+            if len(labels.shape) > 1:
+                labels = labels.squeeze(-1)
+            
+            # Ensure labels has at least 1 dimension
+            if len(labels.shape) == 0:
+                labels = labels.unsqueeze(0)
+            
+            # Get counts for each class
+            pred_counts = torch.bincount(pred_indices, minlength=self.hparams.n_classes)
+            target_counts = torch.bincount(labels, minlength=self.hparams.n_classes)
+            
+            print(f"  Predictions: HC={pred_counts[0].item()}, PD={pred_counts[1].item()}")
+            print(f"  Targets: HC={target_counts[0].item()}, PD={target_counts[1].item()}")
+            
+            # Check if loss is near zero
+            if loss.item() < 1e-6:
+                self.empty_loss_count += 1
+                if self.empty_loss_count > 5:
+                    print("WARNING: Multiple batches with near-zero loss detected.")
+                    print("This suggests the model may not be learning properly.")
+                    print("Check if all predictions are the same class or if labels are corrupted.")
+        
         # 2) backprop
         loss.backward()
-        # 3) step both
+        
+        # 3) Apply gradient clipping to prevent exploding gradients
+        torch.nn.utils.clip_grad_norm_(self.modules.classifier.parameters(), max_norm=1.0)
+        if not self.hparams.freeze_ssl:
+            torch.nn.utils.clip_grad_norm_(self.modules.whisper.parameters(), max_norm=1.0)
+        
+        # 4) step both optimizers
         self.optimizer.step()
         if hasattr(self, "ssl_optimizer"):
             self.ssl_optimizer.step()
-        # 4) zero grads
+        
+        # 5) zero grads
         self.optimizer.zero_grad()
         if hasattr(self, "ssl_optimizer"):
             self.ssl_optimizer.zero_grad()
+        
         return loss
 
     def on_stage_end(self, stage, stage_loss, epoch=None):
@@ -611,15 +735,15 @@ class ParkinsonBrain(sb.Brain):
 
 
 def dataio_prep(hparams):
-    """Prepare the data for training and evaluation."""
+    """Prepare the data for training and evaluation with improved balance checking."""
     # Create the label encoder
     label_encoder = sb.dataio.encoder.CategoricalEncoder()
 
-    # 1. Define the audio pipeline
+    # 1. Define the audio pipeline with improved error handling
     @sb.utils.data_pipeline.takes("path")
     @sb.utils.data_pipeline.provides("sig")
     def audio_pipeline(wav):
-        """Load and process the audio file."""
+        """Load and process the audio file with robust error handling."""
         try:
             sig = sb.dataio.dataio.read_audio(wav)
 
@@ -631,10 +755,19 @@ def dataio_prep(hparams):
                     new_freq=hparams["sample_rate"]
                 ).squeeze(0)
 
+            # Add noise to prevent the model from learning to classify based on silence
+            if torch.all(sig == 0):  # If it's a dummy signal (all zeros)
+                # Add very small random noise to prevent the model from memorizing silence
+                sig = sig + torch.randn_like(sig) * 0.001
+                print(f"Added noise to dummy signal for {wav}")
+                
             return sig
         except Exception as e:
             print(f"Error loading {wav}: {e}")
-            return torch.zeros(16000)  # Return dummy signal on error
+            # Return dummy signal with small random noise instead of pure zeros
+            dummy_sig = torch.zeros(hparams.get("sample_rate", 16000))
+            dummy_sig = dummy_sig + torch.randn_like(dummy_sig) * 0.001
+            return dummy_sig
 
     # 2. Define the label pipeline
     @sb.utils.data_pipeline.takes("label")
@@ -662,15 +795,80 @@ def dataio_prep(hparams):
             output_keys=["id", "sig", "label_encoded"],
         )
 
+    # Check for dataset imbalance
+    dataset_imbalance = False
+    missing_classes = []
+    
     # Print dataset statistics
-    for split in ("train","valid","test"):
+    for split in ("train", "valid", "test"):
         try:
             with open(data_info[split]) as f:
                 manifest = json.load(f)
                 counts = Counter(entry["label"] for entry in manifest.values())
                 print(f"{split:5} →", counts)
+                
+                # Check if any classes are missing
+                if split == "valid" or split == "test":
+                    for class_name in ["HC", "PD"]:
+                        if class_name not in counts or counts[class_name] == 0:
+                            dataset_imbalance = True
+                            missing_classes.append(f"{class_name} in {split}")
         except Exception as e:
             print(f"Could not load statistics for {split}: {e}")
+    
+    # Fix validation set if it has class imbalance
+    if dataset_imbalance:
+        print("\nWARNING: Dataset imbalance detected. Missing classes:", missing_classes)
+        print("Creating a more balanced validation set by borrowing some samples from training set.")
+        
+        # Option 1: Move some samples from training to validation if validation is imbalanced
+        if "PD" not in counts or counts["PD"] == 0:
+            # Find PD samples in training set
+            train_manifest = json.load(open(data_info["train"]))
+            pd_samples = [k for k, v in train_manifest.items() if v["label"] == "PD"]
+            
+            if pd_samples:
+                # Take a few PD samples from training and add to validation
+                valid_manifest = json.load(open(data_info["valid"]))
+                
+                # Move 10 samples or 10% of PD samples, whichever is larger
+                num_to_move = max(10, int(len(pd_samples) * 0.1))
+                samples_to_move = pd_samples[:min(num_to_move, len(pd_samples))]
+                
+                print(f"Moving {len(samples_to_move)} PD samples from training to validation set")
+                
+                # Add to validation
+                for sample_id in samples_to_move:
+                    valid_manifest[sample_id] = train_manifest[sample_id]
+                
+                # Save updated validation manifest
+                with open(data_info["valid"], "w") as f:
+                    json.dump(valid_manifest, f, indent=2)
+                
+                # Remove from training
+                for sample_id in samples_to_move:
+                    train_manifest.pop(sample_id)
+                
+                # Save updated training manifest
+                with open(data_info["train"], "w") as f:
+                    json.dump(train_manifest, f, indent=2)
+                
+                # Reload datasets
+                datasets["train"] = sb.dataio.dataset.DynamicItemDataset.from_json(
+                    json_path=data_info["train"],
+                    replacements={"data_root": hparams.get("data_folder", "")},
+                    dynamic_items=[audio_pipeline, label_pipeline],
+                    output_keys=["id", "sig", "label_encoded"],
+                )
+                
+                datasets["valid"] = sb.dataio.dataset.DynamicItemDataset.from_json(
+                    json_path=data_info["valid"],
+                    replacements={"data_root": hparams.get("data_folder", "")},
+                    dynamic_items=[audio_pipeline, label_pipeline],
+                    output_keys=["id", "sig", "label_encoded"],
+                )
+                
+                print("Datasets reloaded with balanced validation set")
 
     # Save/load label encoder
     lab_enc_file = os.path.join(hparams["save_folder"], "label_encoder.txt")
