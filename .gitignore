@@ -12,3 +12,4 @@ __pycache__/
 *.ckpt
 .DS_Stor
 py312_env/
+data.py

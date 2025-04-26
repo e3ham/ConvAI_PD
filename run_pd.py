@@ -37,10 +37,10 @@ def main():
     )
 
     # Desired STFT settings in samples
-    n_fft_samples   = 512
+    n_fft_samples = 512
     win_len_samples = 512
     hop_len_samples = 128
-    sample_rate     = 16000
+    sample_rate = 16000
 
     # Convert to milliseconds for YAML
     win_len_ms = int(win_len_samples * 1000 / sample_rate)  # -> 32 ms

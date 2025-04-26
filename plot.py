@@ -2,7 +2,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # Model names
-models = ["Whisper-base", "Whisper-base (weighted)", "Whisper-medium (weighted)", "Whisper-large (weighted)"]
+models = [
+    "Whisper-base",
+    "Whisper-base (weighted)",
+    "Whisper-medium (weighted)",
+    "Whisper-large (weighted)"]
 
 # Accuracy values
 overall_acc = [0.6221, 0.6860, 0.8140, 0.7616]

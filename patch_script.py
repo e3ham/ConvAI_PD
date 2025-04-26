@@ -11,7 +11,8 @@ if "import custom_features" not in content:
     import_line = "import custom_features"
     import_pos = content.find("import speechbrain as sb")
     if import_pos >= 0:
-        content = content[:import_pos] + import_line + "\n" + content[import_pos:]
+        content = content[:import_pos] + \
+            import_line + "\n" + content[import_pos:]
 
 # Write the modified content back
 with open("ecapa.py", "w") as f:
