@@ -18,6 +18,55 @@ from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, roc_curve,
 
 
 class ParkinsonBrain(sb.Brain):
+    """
+    A SpeechBrain-based neural network for Parkinson's disease detection using Whisper features.
+    
+    This class implements a classifier that processes speech audio through a Whisper model
+    and classifies speakers as having Parkinson's disease (PD) or being healthy controls (HC).
+    It includes comprehensive tracking of performance metrics across different demographic
+    groups and visualization capabilities.
+    
+    Attributes:
+        epoch_metrics (dict): Tracks losses and error rates across epochs
+        demographic_results (dict): Stores performance by demographic categories
+        train_losses (list): History of training losses per epoch
+        valid_losses (list): History of validation losses per epoch
+        valid_errors (list): History of validation error rates per epoch
+        test_error (float): Final test error rate
+        test_loss (float): Final test loss
+        all_ids (list): IDs of evaluated samples
+        all_preds (list): Model predictions for each sample
+        all_targets (list): Ground truth labels for each sample
+        plots_dir (str): Directory where plots will be saved
+        
+    Args:
+        modules (dict): Dictionary of PyTorch modules for the model architecture
+        opt_class (torch.optim): Optimizer class for model parameters
+        hparams (dict): Hyperparameters for training and inference
+        run_opts (dict): Runtime options
+        checkpointer (sb.utils.checkpoints): Checkpoint manager
+        
+    Example:
+        >>> # Setup hyperparameters
+        >>> with open("hparams/whisper_pd.yaml") as fin:
+        ...     hparams = load_hyperpyyaml(fin)
+        >>> # Create datasets
+        >>> datasets = dataio_prep(hparams)
+        >>> # Initialize model
+        >>> pd_detector = ParkinsonBrain(
+        ...     modules=hparams["modules"],
+        ...     opt_class=hparams["opt_class"],
+        ...     hparams=hparams,
+        ...     run_opts=run_opts,
+        ...     checkpointer=hparams["checkpointer"],
+        ... )
+        >>> # Train model
+        >>> pd_detector.fit(
+        ...     epoch_counter=pd_detector.hparams.epoch_counter,
+        ...     train_set=datasets["train"],
+        ...     valid_set=datasets["valid"],
+        ... )
+    """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Add tracking for metrics over epochs
@@ -47,7 +96,27 @@ class ParkinsonBrain(sb.Brain):
         os.makedirs(self.plots_dir, exist_ok=True)
 
     def compute_forward(self, batch, stage):
-        """Forward computations from the waveform to the output probabilities."""
+        """
+        Perform forward computations from waveforms to classification outputs.
+        
+        This method processes audio waveforms through the Whisper model, applies
+        pooling to the embeddings, and passes them through the classifier to 
+        produce log probabilities for each class.
+        
+        Args:
+            batch (PaddedBatch): Batch of audio signals with metadata
+            stage (sb.Stage): Current stage (TRAIN, VALID, or TEST)
+            
+        Returns:
+            torch.Tensor: Log probabilities for each class, shape [batch_size, num_classes]
+            
+        Example:
+            >>> # During training
+            >>> batch = next(iter(train_loader))
+            >>> outputs = model.compute_forward(batch, sb.Stage.TRAIN)
+            >>> print(f"Output shape: {outputs.shape}")
+            Output shape: torch.Size([8, 2])
+        """
         batch = batch.to(self.device)
         wavs, wav_lens = batch.sig
 
@@ -70,7 +139,29 @@ class ParkinsonBrain(sb.Brain):
         return outputs
 
     def compute_objectives(self, predictions, batch, stage):
-        """Compute the loss (NLL) given predictions and targets."""
+        """
+        Compute the loss and track predictions for later analysis.
+        
+        This method calculates the negative log-likelihood loss for training
+        and tracks predictions, targets, and IDs for validation and test stages
+        to support detailed analysis and demographic evaluation.
+        
+        Args:
+            predictions (torch.Tensor): Model predictions (log probabilities)
+            batch (PaddedBatch): Batch containing audio signals and labels
+            stage (sb.Stage): Current stage (TRAIN, VALID, or TEST)
+            
+        Returns:
+            torch.Tensor: The computed loss value
+            
+        Example:
+            >>> # During validation
+            >>> batch = next(iter(valid_loader))
+            >>> outputs = model.compute_forward(batch, sb.Stage.VALID)
+            >>> loss = model.compute_objectives(outputs, batch, sb.Stage.VALID)
+            >>> print(f"Validation loss: {loss.item():.4f}")
+            Validation loss: 0.5863
+        """
         # Unwrap labels
         if isinstance(batch.label_encoded, tuple):
             labels, *_ = batch.label_encoded  # For tuple format
@@ -133,7 +224,26 @@ class ParkinsonBrain(sb.Brain):
         return loss
 
     def fit_batch(self, batch):
-        """Step both the main optimizer and ssl_optimizer."""
+        """
+        Process a batch of data with backpropagation.
+        
+        This method overrides the default SpeechBrain implementation to handle
+        both the main model optimizer and the optional SSL (Whisper) model optimizer
+        when fine-tuning is enabled.
+        
+        Args:
+            batch (PaddedBatch): Batch of training data
+            
+        Returns:
+            torch.Tensor: The computed loss value
+            
+        Example:
+            >>> # During training (called internally by fit())
+            >>> batch = next(iter(train_loader))
+            >>> loss = model.fit_batch(batch)
+            >>> print(f"Batch loss: {loss.item():.4f}")
+            Batch loss: 0.6234
+        """
         # 1) forward + loss
         preds = self.compute_forward(batch, sb.Stage.TRAIN)
         loss = self.compute_objectives(preds, batch, sb.Stage.TRAIN)
@@ -150,7 +260,28 @@ class ParkinsonBrain(sb.Brain):
         return loss
 
     def on_stage_end(self, stage, stage_loss, epoch=None):
-        """Process results for each stage."""
+        """
+        Process results at the end of each stage.
+        
+        This method handles end-of-stage tasks including calculating performance metrics,
+        updating learning rates, saving checkpoints, performing demographic analysis,
+        and generating visualizations based on the completed stage.
+        
+        Args:
+            stage (sb.Stage): Stage that has just completed (TRAIN, VALID, or TEST)
+            stage_loss (float): Average loss for the completed stage
+            epoch (int, optional): Current epoch number. Defaults to None.
+            
+        Returns:
+            None: This method performs end-of-stage processing but does not return a value
+            
+        Example:
+            >>> # At the end of validation (called internally)
+            >>> model.on_stage_end(sb.Stage.VALID, 0.4568, epoch=5)
+            
+            Stage: Stage.VALID, Total samples: 120, Errors: 30
+            Error rate: 0.2500, Accuracy: 0.7500
+        """
         # TRAIN stage: just record the loss
         if stage == sb.Stage.TRAIN:
             self.train_loss = stage_loss
@@ -238,7 +369,24 @@ class ParkinsonBrain(sb.Brain):
             self.plot_confusion_matrix()
 
     def on_stage_start(self, stage, epoch=None):
-        """Setup for each stage (TRAIN, VALID, TEST)."""
+        """
+        Setup for the start of each stage.
+        
+        This method initializes metrics tracking for each stage and resets
+        the lists that track predictions, targets, and IDs.
+        
+        Args:
+            stage (sb.Stage): Stage that is about to start (TRAIN, VALID, or TEST)
+            epoch (int, optional): Current epoch number. Defaults to None.
+            
+        Returns:
+            None: This method performs stage setup but does not return a value
+            
+        Example:
+            >>> # At the start of test stage (called internally)
+            >>> model.on_stage_start(sb.Stage.TEST)
+            Reset tracking lists for Stage.TEST
+        """
         # Loss metric for all stages
         self.loss_metric = sb.utils.metric_stats.MetricStats(
             metric=sb.nnet.losses.nll_loss
@@ -364,7 +512,24 @@ class ParkinsonBrain(sb.Brain):
                 "dataset", "Dataset Group-based Performance")
 
     def _plot_demographic_category(self, category, title):
-        """Plot a specific demographic category."""
+        """
+        Plot performance for a specific demographic category.
+        
+        This helper method creates a line plot showing accuracy over epochs for
+        each group within a demographic category (sex, age, or clinical group).
+        
+        Args:
+            category (str): Demographic category to plot ('sex', 'age', or 'dataset')
+            title (str): Title for the plot
+            
+        Returns:
+            None: This method creates and saves a plot but does not return a value
+            
+        Example:
+            >>> # Called by plot_demographic_results()
+            >>> model._plot_demographic_category('sex', 'Sex-based Performance')
+            # Creates a plot file at model.plots_dir/sex_performance.png
+        """
         plt.figure(figsize=(12, 8))
         data = self.demographic_results[category]
 
@@ -402,7 +567,32 @@ class ParkinsonBrain(sb.Brain):
         plt.close()
 
     def analyze_demographics(self, stage_name, epoch=None):
-        """Analyze model performance across different demographic groups."""
+        """
+        Analyze model performance across different demographic groups.
+        
+        This method calculates and reports accuracy statistics broken down by sex,
+        age group, and clinical group (HC vs. PD). It also updates tracking data
+        for visualizations and optionally creates snapshot plots.
+        
+        Args:
+            stage_name (str): Name of the stage being analyzed ('valid' or 'test')
+            epoch (int, optional): Current epoch number. Defaults to None.
+            
+        Returns:
+            None: This method prints results and saves plots but does not return a value
+            
+        Example:
+            >>> # After validation
+            >>> model.analyze_demographics('valid', epoch=10)
+            
+            Demographic analysis for valid:
+            - Processing 120 samples
+            M: 0.82 (65/80)
+            F: 0.78 (31/40)
+            20s: 0.89 (17/19)
+            30s: 0.85 (23/27)
+            ...
+        """
         if not hasattr(self, "all_ids") or not self.all_ids:
             print(f"No evaluation data available for {stage_name}")
             return

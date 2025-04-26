@@ -18,6 +18,55 @@ from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, roc_curve,
 
 
 class ParkinsonBrain(sb.Brain):
+    """
+    A SpeechBrain-based neural network for Parkinson's disease detection using wav2vec2 features.
+    
+    This class extends the SpeechBrain Brain class to implement a classifier that processes 
+    speech audio through a wav2vec2 model and classifies speakers as having Parkinson's disease (PD) 
+    or being healthy controls (HC). It includes comprehensive tracking of performance metrics, 
+    demographic analysis capabilities, and visualization tools.
+    
+    Attributes:
+        epoch_metrics (dict): Tracks losses and error rates across epochs
+        demographic_results (dict): Stores performance by demographic categories
+        train_losses (list): History of training losses per epoch
+        valid_losses (list): History of validation losses per epoch
+        valid_errors (list): History of validation error rates per epoch
+        test_error (float): Final test error rate
+        test_loss (float): Final test loss
+        all_ids (list): IDs of evaluated samples
+        all_preds (list): Model predictions for each sample
+        all_targets (list): Ground truth labels for each sample
+        plots_dir (str): Directory where plots will be saved
+        
+    Args:
+        modules (dict): Dictionary of PyTorch modules for the model
+        opt_class (torch.optim): Optimizer class for model parameters
+        hparams (dict): Hyperparameters for training and inference
+        run_opts (dict): Runtime options
+        checkpointer (sb.utils.checkpoints): Checkpoint manager
+        
+    Example:
+        >>> # Setup hyperparameters
+        >>> with open("hparams/wav2vec2_pd.yaml") as fin:
+        ...     hparams = load_hyperpyyaml(fin)
+        >>> # Create datasets
+        >>> datasets = dataio_prep(hparams)
+        >>> # Initialize model
+        >>> pd_detector = ParkinsonBrain(
+        ...     modules=hparams["modules"],
+        ...     opt_class=hparams["opt_class"],
+        ...     hparams=hparams,
+        ...     run_opts=run_opts,
+        ...     checkpointer=hparams["checkpointer"],
+        ... )
+        >>> # Train model
+        >>> pd_detector.fit(
+        ...     epoch_counter=pd_detector.hparams.epoch_counter,
+        ...     train_set=datasets["train"],
+        ...     valid_set=datasets["valid"],
+        ... )
+    """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Add tracking for metrics over epochs
@@ -47,7 +96,27 @@ class ParkinsonBrain(sb.Brain):
         os.makedirs(self.plots_dir, exist_ok=True)
 
     def compute_forward(self, batch, stage):
-        """Forward computations from the waveform to the output probabilities."""
+        """
+        Perform forward pass from waveforms to classification outputs.
+        
+        This method processes audio waveforms through the wav2vec2 model, performs
+        pooling on the features, and passes them through the classifier to produce
+        log probabilities for each class.
+        
+        Args:
+            batch (PaddedBatch): Batch of audio signals with metadata
+            stage (sb.Stage): Current training stage (TRAIN, VALID, or TEST)
+            
+        Returns:
+            torch.Tensor: Log probabilities for each class, shape [batch_size, num_classes]
+            
+        Example:
+            >>> # During training
+            >>> batch = next(iter(train_loader))
+            >>> outputs = model.compute_forward(batch, sb.Stage.TRAIN)
+            >>> print(f"Output shape: {outputs.shape}")
+            Output shape: torch.Size([8, 2])
+        """
         batch = batch.to(self.device)
         wavs, wav_lens = batch.sig
 
@@ -68,7 +137,28 @@ class ParkinsonBrain(sb.Brain):
         return outputs
 
     def compute_objectives(self, predictions, batch, stage):
-        """Compute the loss (NLL) given predictions and targets."""
+        """
+        Compute the loss and track predictions for analysis.
+        
+        This method calculates the negative log-likelihood loss and, for validation and test
+        stages, tracks predictions, targets, and IDs for later analysis.
+        
+        Args:
+            predictions (torch.Tensor): Model predictions (log probabilities)
+            batch (PaddedBatch): Batch containing audio signals and labels
+            stage (sb.Stage): Current training stage (TRAIN, VALID, or TEST)
+            
+        Returns:
+            torch.Tensor: The computed loss value
+            
+        Example:
+            >>> # During training
+            >>> batch = next(iter(train_loader))
+            >>> outputs = model.compute_forward(batch, sb.Stage.TRAIN)
+            >>> loss = model.compute_objectives(outputs, batch, sb.Stage.TRAIN)
+            >>> print(f"Loss: {loss.item():.4f}")
+            Loss: 0.6934
+        """
         # Unwrap labels
         if isinstance(batch.label_encoded, tuple):
             labels, *_ = batch.label_encoded  # For tuple format
@@ -131,7 +221,26 @@ class ParkinsonBrain(sb.Brain):
         return loss
 
     def fit_batch(self, batch):
-        """Override so we step both optimizers."""
+        """
+        Process a batch of data with backpropagation.
+        
+        This method overrides the default SpeechBrain implementation to handle
+        both the main model optimizer and the optional SSL model optimizer when
+        fine-tuning wav2vec2.
+        
+        Args:
+            batch (PaddedBatch): Batch of training data
+            
+        Returns:
+            torch.Tensor: The computed loss value
+            
+        Example:
+            >>> # During training (called automatically by fit())
+            >>> batch = next(iter(train_loader))
+            >>> loss = model.fit_batch(batch)
+            >>> print(f"Batch loss: {loss.item():.4f}")
+            Batch loss: 0.6821
+        """
         # 1) forward + loss
         predictions = self.compute_forward(batch, sb.Stage.TRAIN)
         loss = self.compute_objectives(predictions, batch, sb.Stage.TRAIN)
@@ -148,7 +257,28 @@ class ParkinsonBrain(sb.Brain):
         return loss
 
     def on_stage_end(self, stage, stage_loss, epoch=None):
-        """Process results for each stage."""
+        """
+        Process results at the end of each stage.
+        
+        This method calculates performance metrics, updates learning rates, saves
+        checkpoints, performs demographic analysis, and generates visualizations
+        based on the stage that has completed.
+        
+        Args:
+            stage (sb.Stage): Stage that has just completed (TRAIN, VALID, or TEST)
+            stage_loss (float): Average loss for the stage
+            epoch (int, optional): Current epoch number. Defaults to None.
+            
+        Returns:
+            None: This method performs end-of-stage processing but does not return a value
+            
+        Example:
+            >>> # Automatically called at the end of each validation stage
+            >>> model.on_stage_end(sb.Stage.VALID, 0.4231, epoch=5)
+            
+            Stage: Stage.VALID, Total samples: 120, Errors: 24
+            Error rate: 0.2000, Accuracy: 0.8000
+        """
         # TRAIN stage: just record the loss
         if stage == sb.Stage.TRAIN:
             self.train_loss = stage_loss

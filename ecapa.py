@@ -15,6 +15,48 @@ import sklearn
 
 
 class ParkinsonsBrain(sb.Brain):
+    """
+    A specialized SpeechBrain model for Parkinson's disease detection from speech audio.
+    
+    This class extends SpeechBrain's Brain class to implement custom forward pass,
+    loss calculation, metric tracking, and demographic analysis for a Parkinson's 
+    disease classification model. It includes tracking and visualization of 
+    performance metrics across different demographic groups.
+    
+    Attributes:
+        epoch_metrics (dict): Dictionary tracking loss and error metrics per epoch
+        demographic_results (dict): Dictionary tracking performance by demographic groups
+        plots_dir (str): Directory where performance plots are saved
+        
+    Args:
+        modules (dict): The PyTorch modules that make up the model
+        opt_class (torch.optim): The PyTorch optimizer class
+        hparams (dict): Hyperparameters for training and evaluation
+        run_opts (dict): Runtime options for SpeechBrain execution
+        checkpointer (sb.utils.checkpoints): Checkpoint manager
+        
+    Example:
+        >>> # Setup hyperparameters and modules
+        >>> with open("hparams.yaml") as fin:
+        ...     hparams = load_hyperpyyaml(fin)
+        >>> # Prepare datasets
+        >>> datasets = dataio_prep(hparams)
+        >>> # Initialize model
+        >>> pd_brain = ParkinsonsBrain(
+        ...     modules=hparams["modules"],
+        ...     opt_class=hparams["opt_class"],
+        ...     hparams=hparams,
+        ...     run_opts=run_opts,
+        ...     checkpointer=hparams["checkpointer"],
+        ... )
+        >>> # Train and evaluate
+        >>> pd_brain.fit(
+        ...     epoch_counter=pd_brain.hparams.epoch_counter,
+        ...     train_set=datasets["train"],
+        ...     valid_set=datasets["valid"],
+        ... )
+        >>> result = pd_brain.evaluate(test_set=datasets["test"])
+    """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Add tracking for metrics over epochs
@@ -37,6 +79,26 @@ class ParkinsonsBrain(sb.Brain):
         os.makedirs(self.plots_dir, exist_ok=True)
 
     def compute_forward(self, batch, stage):
+        """
+        Forward computations from input audio to classification output.
+        
+        This method processes audio through the feature extraction pipeline,
+        embedding model, and classifier to generate predictions.
+        
+        Args:
+            batch (PaddedBatch): The input batch containing audio signals and metadata.
+            stage (sb.Stage): The current stage (TRAIN, VALID, or TEST).
+            
+        Returns:
+            torch.Tensor: The model's predictions (logits) with shape [batch_size, num_classes].
+            
+        Example:
+            >>> # Typically called internally during training/evaluation
+            >>> batch = next(iter(train_loader))
+            >>> predictions = pd_brain.compute_forward(batch, sb.Stage.TRAIN)
+            >>> print(f"Prediction shape: {predictions.shape}")
+            Prediction shape: torch.Size([8, 2])
+        """
         batch = batch.to(self.device)
         sigs, lengths = batch.sig
         # 1) Features [B, n_mels, T]
@@ -56,7 +118,24 @@ class ParkinsonsBrain(sb.Brain):
         return predictions
 
     def on_stage_start(self, stage, epoch=None):
-        """Prepare for stage."""
+        """
+        Prepare for a new training, validation, or test stage.
+        
+        This method initializes the metrics and trackers needed for the current stage.
+        
+        Args:
+            stage (sb.Stage): The current stage (TRAIN, VALID, or TEST).
+            epoch (int, optional): The current epoch number. Defaults to None.
+            
+        Returns:
+            None: This method initializes internal trackers but doesn't return a value.
+            
+        Example:
+            >>> # Typically called internally at the start of each stage
+            >>> pd_brain.on_stage_start(sb.Stage.VALID, epoch=5)
+            >>> print(f"Initialized metrics for {sb.Stage.VALID}")
+            Initialized metrics for Stage.VALID
+        """
         self.loss_metric = sb.utils.metric_stats.MetricStats(
             metric=sb.nnet.losses.bce_loss
         )
@@ -74,7 +153,29 @@ class ParkinsonsBrain(sb.Brain):
                     f"Using existing tracking lists with {len(self.all_ids)} items for {stage}")
 
     def compute_objectives(self, predictions, batch, stage):
-        """Compute loss and metrics."""
+        """
+        Compute the loss and other metrics for the current batch.
+        
+        This method calculates the loss for training and tracks prediction accuracy
+        for validation and testing. It also maintains lists of all predictions for
+        later demographic analysis.
+        
+        Args:
+            predictions (torch.Tensor): The model's output predictions.
+            batch (PaddedBatch): The input batch with signals and labels.
+            stage (sb.Stage): The current stage (TRAIN, VALID, or TEST).
+            
+        Returns:
+            torch.Tensor: The computed loss value for this batch.
+            
+        Example:
+            >>> # Typically called internally during training/evaluation
+            >>> batch = next(iter(valid_loader))
+            >>> predictions = pd_brain.compute_forward(batch, sb.Stage.VALID)
+            >>> loss = pd_brain.compute_objectives(predictions, batch, sb.Stage.VALID)
+            >>> print(f"Validation loss: {loss.item():.4f}")
+            Validation loss: 0.6842
+        """
         # Unwrap labels
         raw_labels = batch.label_encoded
         if isinstance(raw_labels, PaddedData):
@@ -122,7 +223,27 @@ class ParkinsonsBrain(sb.Brain):
         return loss
 
     def on_stage_end(self, stage, stage_loss, epoch=None):
-        """Process results at the end of each stage."""
+        """
+        Process results at the end of each stage.
+        
+        This method updates learning rates, logs statistics, saves checkpoints,
+        performs demographic analysis, and generates plots based on the results
+        from the completed stage.
+        
+        Args:
+            stage (sb.Stage): The stage that has just completed (TRAIN, VALID, or TEST).
+            stage_loss (float): The average loss for the completed stage.
+            epoch (int, optional): The current epoch number. Defaults to None.
+            
+        Returns:
+            None: This method performs end-of-stage processing but doesn't return a value.
+            
+        Example:
+            >>> # Typically called internally at the end of each stage
+            >>> pd_brain.on_stage_end(sb.Stage.VALID, 0.5423, epoch=5)
+            >>> print("Stage completed, model checkpointed")
+            Stage completed, model checkpointed
+        """
         # TRAIN stage: just record the loss
         if stage == sb.Stage.TRAIN:
             self.train_loss = stage_loss
@@ -185,7 +306,23 @@ class ParkinsonsBrain(sb.Brain):
             self.plot_demographic_results()
 
     def plot_losses(self):
-        """Plot the training and validation losses."""
+        """
+        Plot the training and validation losses and error rates.
+        
+        This method creates and saves a figure showing the progression of
+        training loss, validation loss, and validation error over epochs.
+        
+        Args:
+            None: This method uses the metrics tracked in self.epoch_metrics.
+            
+        Returns:
+            None: This method saves a plot file but doesn't return a value.
+            
+        Example:
+            >>> pd_brain.plot_losses()
+            >>> print(f"Loss plots saved to {pd_brain.plots_dir}/loss_curves.png")
+            Loss plots saved to exp/parkinsons_detection/plots/loss_curves.png
+        """
         if not self.epoch_metrics["epoch"]:
             return
 
@@ -230,7 +367,23 @@ class ParkinsonsBrain(sb.Brain):
         plt.close()
 
     def plot_demographic_results(self):
-        """Plot the demographic analysis results."""
+        """
+        Plot the performance across different demographic groups.
+        
+        This method generates plots showing model accuracy for different
+        demographic categories (sex, age, and dataset group).
+        
+        Args:
+            None: This method uses data tracked in self.demographic_results.
+            
+        Returns:
+            None: This method saves plot files but doesn't return a value.
+            
+        Example:
+            >>> pd_brain.plot_demographic_results()
+            >>> print("Demographic analysis plots created")
+            Demographic analysis plots created
+        """
         # Plot sex-based results
         if self.demographic_results["sex"]["groups"]:
             self._plot_demographic_category("sex", "Sex-based Performance")
@@ -245,7 +398,24 @@ class ParkinsonsBrain(sb.Brain):
                 "dataset", "Dataset Group-based Performance")
 
     def _plot_demographic_category(self, category, title):
-        """Plot a specific demographic category."""
+        """
+        Plot the performance for a specific demographic category.
+        
+        This helper method generates a plot showing model accuracy over time
+        for each group within a demographic category (sex, age, or dataset).
+        
+        Args:
+            category (str): The demographic category to plot ('sex', 'age', or 'dataset').
+            title (str): The title for the plot.
+            
+        Returns:
+            None: This method saves a plot file but doesn't return a value.
+            
+        Example:
+            >>> pd_brain._plot_demographic_category('sex', 'Sex-based Performance')
+            >>> print(f"Plot saved to {pd_brain.plots_dir}/sex_performance.png")
+            Plot saved to exp/parkinsons_detection/plots/sex_performance.png
+        """
         plt.figure(figsize=(12, 8))
         data = self.demographic_results[category]
 
@@ -283,7 +453,30 @@ class ParkinsonsBrain(sb.Brain):
         plt.close()
 
     def analyze_demographics(self, stage_name, epoch=None):
-        """Analyze model performance across different demographic groups."""
+        """
+        Analyze model performance across different demographic groups.
+        
+        This method calculates accuracy for different demographic groups 
+        (sex, age, dataset) and optionally creates snapshot plots for the current epoch.
+        
+        Args:
+            stage_name (str): The current stage name ('train', 'valid', or 'test').
+            epoch (int, optional): The current epoch number. Defaults to None.
+            
+        Returns:
+            None: This method prints analysis results and saves plots but doesn't return a value.
+            
+        Example:
+            >>> pd_brain.analyze_demographics('valid', epoch=10)
+            
+            Demographic analysis for valid:
+            - Processing 120 samples
+            M: 0.88 (72/82)
+            F: 0.76 (29/38)
+            20s: 0.92 (23/25)
+            30s: 0.85 (17/20)
+            ...
+        """
         if not hasattr(self, "all_ids") or not self.all_ids:
             print(f"No evaluation data available for {stage_name}")
             return
@@ -438,7 +631,29 @@ class ParkinsonsBrain(sb.Brain):
 
 
 def dataio_prep(hparams):
-    """Prepare the data for training and evaluation."""
+    """
+    Prepare the data for training and evaluation.
+    
+    This function creates data pipelines for loading and processing audio files,
+    handles label encoding, and constructs SpeechBrain datasets for training,
+    validation, and testing.
+    
+    Args:
+        hparams (dict): The hyperparameters containing paths and processing options.
+        
+    Returns:
+        dict: A dictionary containing SpeechBrain DynamicItemDataset objects for 
+              'train', 'valid', and 'test' splits.
+        
+    Example:
+        >>> # Load hyperparameters
+        >>> with open("hparams.yaml") as fin:
+        ...     hparams = load_hyperpyyaml(fin)
+        >>> # Prepare datasets
+        >>> datasets = dataio_prep(hparams)
+        >>> print(f"Created datasets with {len(datasets['train'])} training samples")
+        Created datasets with 300 training samples
+    """
     # Create the label encoder with unknown label handling
     label_encoder = sb.dataio.encoder.CategoricalEncoder()
 

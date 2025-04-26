@@ -1,152 +1,3 @@
-
-# import os
-# import sys
-# import torch
-# import torchaudio
-# import speechbrain as sb
-# from hyperpyyaml import load_hyperpyyaml
-# import json
-# # Brain class for Parkinson detection
-# ### !!!CHANGED HERE!!! Renamed class from DigitBrain to ParkinsonBrain for clarity
-# class ParkinsonBrain(sb.Brain):
-#     def compute_forward(self, batch, stage):
-#         batch = batch.to(self.device)
-#         sigs, lengths = batch.sig
-#         fbanks = self.modules.compute_features(sigs)
-#         fbanks = self.modules.mean_var_norm(fbanks, lengths)
-#         embeddings = self.modules.embedding_model(fbanks, lengths)
-#         predictions = self.modules.classifier(embeddings)
-#         return predictions
-#     def compute_objectives(self, predictions, batch, stage):
-#         ### !!!CHANGED HERE!!! Changed variable from 'digit_encoded' to 'label_encoded'
-#         labels, _ = batch.label_encoded
-#         loss = sb.nnet.losses.nll_loss(predictions, labels)
-#         if stage != sb.Stage.TRAIN:
-#             self.error_metrics.append(batch.id, predictions, labels)
-#         return loss
-#     def on_stage_start(self, stage, epoch=None):
-#         self.loss_metric = sb.utils.metric_stats.MetricStats(
-#             metric=sb.nnet.losses.nll_loss
-#         )
-#         if stage == sb.Stage.TRAIN:
-#             if not hasattr(self, "train_losses"):
-#                 self.train_losses = []  # :::ADDED::: Initialize train loss tracking
-#         else:
-#             self.error_metrics = self.hparams.error_stats()
-#             if not hasattr(self, "valid_losses"):
-#               self.valid_losses = []  # :::ADDED::: Initialize validation loss tracking
-#             if not hasattr(self, 'valid_errors'):
-#               self.valid_errors = []  # :::ADDED::: Initialize validation error tracking
-#             if not hasattr(self, 'test_loss'):
-#               self.test_loss = None  # :::ADDED::: Initialize train loss tracking
-#     def on_stage_end(self, stage, stage_loss, epoch=None):
-#         if stage == sb.Stage.TRAIN:
-#             self.train_loss = stage_loss
-#             self.train_losses.append(stage_loss)  # :::ADDED::: Save epoch’s train loss
-#             return
-#         # For VALID and TEST: compute stats from error_metrics. :::ADDED:::
-#         stats = {
-#             "loss": stage_loss,
-#             "error": self.error_metrics.summarize("average"),
-#         }
-#         if stage == sb.Stage.VALID:
-#             old_lr, new_lr = self.hparams.lr_annealing(epoch)
-#             sb.nnet.schedulers.update_learning_rate(self.optimizer, new_lr)
-#             self.hparams.train_logger.log_stats(
-#                 {"Epoch": epoch, "lr": old_lr},
-#                 train_stats={"loss": self.train_loss},
-#                 valid_stats=stats,
-#             )
-#             self.checkpointer.save_and_keep_only(meta=stats, min_keys=["error"])  # keep a checkpoint with the lowest validaiton error
-#             # for plotting :::ADDED:::
-#             self.valid_losses.append(stats["loss"])   # :::ADDED::: Save val loss for this epoch
-#             self.valid_errors.append(stats["error"])  # :::ADDED::: Save val error for this epoch
-#         if stage == sb.Stage.TEST:
-#             self.hparams.train_logger.log_stats(
-#                 {"Epoch loaded": self.hparams.epoch_counter.current},
-#                 test_stats=stats,
-#             )
-#             self.test_error = stats["error"]
-# def dataio_prep(hparams):
-#     label_encoder = sb.dataio.encoder.CategoricalEncoder()
-#     @sb.utils.data_pipeline.takes("path")  ### !!!CHANGED HERE!!! Expecting the JSON key 'path'
-#     @sb.utils.data_pipeline.provides("sig")
-#     def audio_pipeline(wav):
-#         sig, fs = torchaudio.load(wav)
-#         sig = torchaudio.functional.resample(sig, orig_freq=fs, new_freq=hparams["sample_rate"]).squeeze(0)
-#         return sig
-#     ### !!!CHANGED HERE!!! Replaced 'digit' with 'label' to match your data format
-#     @sb.utils.data_pipeline.takes("label")
-#     ### !!!CHANGED HERE!!! Replaced 'digit_encoded' with 'label_encoded'
-#     @sb.utils.data_pipeline.provides("label", "label_encoded")
-#     def label_pipeline(label):
-#         yield label
-#         yield label_encoder.encode_label_torch(label)
-#     datasets = {}
-#     data_info = {
-#         "train": hparams["train_annotation"],
-#         "valid": hparams["valid_annotation"],
-#         "test": hparams["test_annotation"],
-#     }
-#     hparams["dataloader_options"]["shuffle"] = True
-#     for dataset in data_info:
-#         datasets[dataset] = sb.dataio.dataset.DynamicItemDataset.from_json(
-#             json_path=data_info[dataset],
-#             dynamic_items=[audio_pipeline, label_pipeline],
-#             ### !!!CHANGED HERE!!! Changed output_keys to use 'label_encoded'
-#             output_keys=["id", "sig", "label_encoded"],
-#         )
-#     label_encoder.load_or_create(
-#         path=os.path.join(hparams["save_folder"], "label_encoder.txt"),
-#         from_didatasets=[datasets["train"]],
-#         ### !!!CHANGED HERE!!! Updated encoder output_key from 'digit' to 'label'
-#         output_key="label",
-#     )
-#     return datasets
-# if __name__ == "__main__":
-#     hparams_file, run_opts, overrides = sb.parse_arguments(sys.argv[1:])
-#     with open(hparams_file) as fin:
-#         hparams = load_hyperpyyaml(fin, overrides)
-#     sb.create_experiment_directory(
-#         experiment_directory=hparams["output_folder"],
-#         hyperparams_to_save=hparams_file,
-#         overrides=overrides,
-#     )
-#     datasets = dataio_prep(hparams)
-#     model = ParkinsonBrain(
-#         modules=hparams["modules"],
-#         opt_class=hparams["opt_class"],
-#         hparams=hparams,
-#         run_opts=run_opts,
-#         checkpointer=hparams["checkpointer"],
-#     )
-#     model.fit(
-#         epoch_counter=model.hparams.epoch_counter,
-#         train_set=datasets["train"],
-#         valid_set=datasets["valid"],
-#         train_loader_kwargs=hparams["dataloader_options"],
-#         valid_loader_kwargs=hparams["dataloader_options"],
-#     )
-#     test_stats = model.evaluate(
-#         test_set=datasets["test"],
-#         min_key="error",
-#         test_loader_kwargs=hparams["dataloader_options"],
-#     )
-#     train_losses_path = os.path.join(hparams["output_folder"], "train_losses.json")
-#     valid_losses_path = os.path.join(hparams["output_folder"], "valid_losses.json")
-#     valid_errors_path = os.path.join(hparams["output_folder"], "valid_errors.json")
-#     test_error_path = os.path.join(hparams["output_folder"], "test_error.json")
-#     test_error = model.test_error
-#     # Save training losses
-#     with open(train_losses_path, "w") as f:
-#         json.dump(model.train_losses, f)
-#     with open(valid_losses_path, "w") as f:
-#         json.dump(model.valid_losses, f)
-#     with open(valid_errors_path, "w") as f:
-#         json.dump(model.valid_errors, f)
-#     with open(test_error_path, "w") as f:
-#         json.dump(test_error, f)
-
 import os
 import sys
 import torch
@@ -167,6 +18,55 @@ from sklearn.model_selection import GroupKFold
 
 
 class ParkinsonBrain(sb.Brain):
+    """
+    A SpeechBrain-based neural network for Parkinson's disease detection using Whisper features.
+    
+    This class implements a classifier that processes speech audio through a Whisper model
+    and classifies speakers as having Parkinson's disease (PD) or being healthy controls (HC).
+    It includes comprehensive tracking of performance metrics across different demographic
+    groups and visualization capabilities.
+    
+    Attributes:
+        epoch_metrics (dict): Tracks losses and error rates across epochs
+        demographic_results (dict): Stores performance by demographic categories
+        train_losses (list): History of training losses per epoch
+        valid_losses (list): History of validation losses per epoch
+        valid_errors (list): History of validation error rates per epoch
+        test_error (float): Final test error rate
+        test_loss (float): Final test loss
+        all_ids (list): IDs of evaluated samples
+        all_preds (list): Model predictions for each sample
+        all_targets (list): Ground truth labels for each sample
+        plots_dir (str): Directory where plots will be saved
+        
+    Args:
+        modules (dict): Dictionary of PyTorch modules for the model architecture
+        opt_class (torch.optim): Optimizer class for model parameters
+        hparams (dict): Hyperparameters for training and inference
+        run_opts (dict): Runtime options
+        checkpointer (sb.utils.checkpoints): Checkpoint manager
+        
+    Example:
+        >>> # Setup hyperparameters
+        >>> with open("hparams/whisper_pd.yaml") as fin:
+        ...     hparams = load_hyperpyyaml(fin)
+        >>> # Create datasets
+        >>> datasets = dataio_prep(hparams)
+        >>> # Initialize model
+        >>> pd_detector = ParkinsonBrain(
+        ...     modules=hparams["modules"],
+        ...     opt_class=hparams["opt_class"],
+        ...     hparams=hparams,
+        ...     run_opts=run_opts,
+        ...     checkpointer=hparams["checkpointer"],
+        ... )
+        >>> # Train model
+        >>> pd_detector.fit(
+        ...     epoch_counter=pd_detector.hparams.epoch_counter,
+        ...     train_set=datasets["train"],
+        ...     valid_set=datasets["valid"],
+        ... )
+    """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Add tracking for metrics over epochs

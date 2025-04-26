@@ -8,7 +8,19 @@ from tqdm import tqdm
 
 
 def get_audio_duration(file_path):
-    """Get the exact duration of an audio file in seconds."""
+    """Get the exact duration of an audio file in seconds.
+    
+    Args:
+        file_path (str): Path to the audio file to analyze.
+        
+    Returns:
+        float: Duration of the audio file in seconds.
+        
+    Example:
+        >>> duration = get_audio_duration("recording.wav")
+        >>> print(f"The recording is {duration:.2f} seconds long")
+        The recording is 5.32 seconds long
+    """
     try:
         info = torchaudio.info(file_path)
         duration = info.num_frames / info.sample_rate
@@ -23,13 +35,49 @@ def create_augmented_manifest(
         output_path,
         augmentation_factor=2):
     """
-    Create a new manifest that includes both original and augmented files.
-
+    Create a new manifest that includes both original and augmented audio files.
+    
+    This function loads an original manifest file, finds all corresponding 
+    augmented audio files in the specified directory, and creates a new manifest
+    that includes both original and augmented entries with appropriate metadata.
+    The function handles various file naming patterns and attempts to match
+    augmented files with their original counterparts.
+    
     Args:
-        manifest_path: Path to the original manifest file
-        augmented_dir: Directory containing augmented files
-        output_path: Where to save the new manifest
-        augmentation_factor: Number of augmentations per original file
+        manifest_path (str): Path to the original manifest JSON file.
+        augmented_dir (str): Directory containing augmented audio files.
+        output_path (str): Path where the new augmented manifest will be saved.
+        augmentation_factor (int, optional): Expected number of augmentations 
+            per original file. Defaults to 2.
+    
+    Returns:
+        dict: The complete augmented manifest data structure that was saved to disk.
+            Each entry contains metadata including path, group, sex, age, label,
+            duration, and augmentation status.
+    
+    Example:
+        >>> original_manifest = "manifests/train.json"
+        >>> augmented_dir = "augmented_data/"
+        >>> output_path = "aug_manifests/train_with_augmentation.json"
+        >>> augmented_data = create_augmented_manifest(
+        ...     original_manifest, 
+        ...     augmented_dir, 
+        ...     output_path
+        ... )
+        Creating augmented manifest from manifests/train.json
+        Added 150 original entries
+        Found 450 total WAV files in augmented directory
+        Of which 300 are augmented files
+        Processing manifest entries: 100%|██████| 150/150 [00:05<00:00]
+        Added 300 augmented entries linked to original files
+        Added 0 additional augmented entries
+        Skipped 0 missing augmentations
+        Total manifest entries: 450
+        Saved augmented manifest to aug_manifests/train_with_augmentation.json
+        >>> print(f"Original entries: {len(original_data)}")
+        >>> print(f"Augmented entries: {len(augmented_data) - len(original_data)}")
+        Original entries: 150
+        Augmented entries: 300
     """
     print(f"Creating augmented manifest from {manifest_path}")
 
@@ -208,12 +256,42 @@ def create_augmented_manifest(
 
 def update_all_manifests(manifest_dir, augmented_dir, output_dir):
     """
-    Process all manifests in a directory.
-
+    Process all manifest files (train, valid, test) in a directory to include augmented data.
+    
+    This function looks for standard split manifest files (train.json, valid.json, test.json)
+    in the specified directory and creates new manifests that include augmented audio data
+    for each split. The new manifests are saved with "_with_augmentation" suffix.
+    
     Args:
-        manifest_dir: Directory containing original manifests
-        augmented_dir: Directory containing augmented files
-        output_dir: Directory to save new manifests
+        manifest_dir (str): Directory containing original manifest files (train.json, 
+                           valid.json, test.json).
+        augmented_dir (str): Directory containing augmented audio files.
+        output_dir (str): Directory where the new augmented manifest files will be saved.
+    
+    Returns:
+        None: This function doesn't return any value but creates new manifest files
+              on disk for each available split.
+    
+    Example:
+        >>> update_all_manifests(
+        ...     manifest_dir="manifests",
+        ...     augmented_dir="augmented_data",
+        ...     output_dir="aug_manifests"
+        ... )
+        Creating augmented manifest from manifests/train.json
+        Added 150 original entries
+        ...
+        Saved augmented manifest to aug_manifests/train_with_augmentation.json
+        
+        Creating augmented manifest from manifests/valid.json
+        Added 30 original entries
+        ...
+        Saved augmented manifest to aug_manifests/valid_with_augmentation.json
+        
+        Creating augmented manifest from manifests/test.json
+        Added 50 original entries
+        ...
+        Saved augmented manifest to aug_manifests/test_with_augmentation.json
     """
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)

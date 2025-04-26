@@ -11,12 +11,24 @@ from scipy.signal import butter, filtfilt
 from pathlib import Path
 from tqdm import tqdm  # Add tqdm for progress bars
 
-# AudioAugmenter and PDVoiceAugmenter classes remain the same
-# ... (include all the code for these classes from the previous version)
-
-
 class AudioAugmenter:
-    """Class to handle audio augmentation techniques for Parkinson's disease detection."""
+    """
+    Class to handle audio augmentation techniques for Parkinson's disease detection.
+    
+    This class provides methods for loading, manipulating, and saving audio files
+    with various augmentation techniques including time stretching, pitch shifting,
+    noise addition, and filtering.
+    
+    Attributes:
+        sample_rate (int): Target sample rate for all audio processing
+        augmentation_factor (int): Number of augmented versions to create per original file
+    
+    Example:
+        >>> augmenter = AudioAugmenter(sample_rate=16000, augmentation_factor=2)
+        >>> waveform = augmenter.load_audio("patient001.wav")
+        >>> augmented = augmenter.apply_random_augmentation(waveform)
+        >>> augmenter.save_audio(augmented, "patient001_aug1.wav")
+    """
 
     def __init__(self, sample_rate=16000, augmentation_factor=2):
         """
@@ -38,11 +50,39 @@ class AudioAugmenter:
         return waveform
 
     def save_audio(self, waveform, file_path):
-        """Save the augmented waveform to disk."""
+        """
+        Save the augmented waveform to disk.
+        
+        Args:
+            waveform (torch.Tensor): Audio waveform tensor to save
+            file_path (str): Destination path where audio will be saved
+            
+        Returns:
+            None: Function saves the file to disk but doesn't return a value
+            
+        Example:
+            >>> augmenter.save_audio(augmented_waveform, "output/speech_aug1.wav")
+        """
         torchaudio.save(file_path, waveform, self.sample_rate)
 
     def time_stretch(self, waveform, rate_range=(0.9, 1.1)):
-        """Apply time stretching without changing pitch."""
+        """
+        Apply time stretching without changing pitch.
+        
+        Args:
+            waveform (torch.Tensor): Input audio waveform
+            rate_range (tuple of float, optional): Range of time stretch factors.
+                Values below 1.0 make audio slower, above 1.0 make it faster.
+                Defaults to (0.9, 1.1).
+                
+        Returns:
+            torch.Tensor: Time-stretched audio waveform
+            
+        Example:
+            >>> stretched = augmenter.time_stretch(waveform, rate_range=(0.85, 1.15))
+            >>> print(f"Original length: {waveform.shape[1]}, New length: {stretched.shape[1]}")
+            Original length: 48000, New length: 43721
+        """
         rate = random.uniform(*rate_range)
         # Convert to numpy for processing with librosa
         audio_np = waveform.numpy().squeeze()
@@ -52,7 +92,21 @@ class AudioAugmenter:
         return torch.from_numpy(stretched.copy()).unsqueeze(0)
 
     def pitch_shift(self, waveform, semitone_range=(-2, 2)):
-        """Apply pitch shifting without changing duration."""
+        """
+        Apply pitch shifting without changing duration.
+        
+        Args:
+            waveform (torch.Tensor): Input audio waveform
+            semitone_range (tuple of float, optional): Range of pitch shifting in semitones.
+                Positive values increase pitch, negative values decrease it.
+                Defaults to (-2, 2).
+                
+        Returns:
+            torch.Tensor: Pitch-shifted audio waveform
+            
+        Example:
+            >>> shifted = augmenter.pitch_shift(waveform, semitone_range=(-1.5, 1.5))
+        """
         n_steps = random.uniform(*semitone_range)
         # Convert to numpy for processing
         audio_np = waveform.numpy().squeeze()
@@ -66,13 +120,44 @@ class AudioAugmenter:
         return torch.from_numpy(shifted.copy()).unsqueeze(0)
 
     def add_noise(self, waveform, noise_level_range=(0.001, 0.005)):
-        """Add random noise to the waveform."""
+        """
+        Add random Gaussian noise to the waveform.
+        
+        Args:
+            waveform (torch.Tensor): Input audio waveform
+            noise_level_range (tuple of float, optional): Range of noise amplitude.
+                Higher values mean more noise. Defaults to (0.001, 0.005).
+                
+        Returns:
+            torch.Tensor: Audio waveform with added noise
+            
+        Example:
+            >>> noisy = augmenter.add_noise(waveform, noise_level_range=(0.002, 0.01))
+        """
         noise_level = random.uniform(*noise_level_range)
         noise = torch.randn_like(waveform) * noise_level
         return waveform + noise
 
     def apply_filter(self, waveform, filter_type='highpass', cutoff_freq=100):
-        """Apply a filter to the waveform."""
+        """
+        Apply a filter to the waveform.
+        
+        Args:
+            waveform (torch.Tensor): Input audio waveform
+            filter_type (str, optional): Type of filter to apply ('highpass' or 'lowpass').
+                Defaults to 'highpass'.
+            cutoff_freq (float, optional): Cutoff frequency in Hz. 
+                Defaults to 100 Hz for highpass.
+                
+        Returns:
+            torch.Tensor: Filtered audio waveform
+            
+        Example:
+            >>> # Remove frequencies below 80 Hz
+            >>> filtered = augmenter.apply_filter(waveform, 'highpass', 80)
+            >>> # Remove frequencies above 7500 Hz
+            >>> filtered = augmenter.apply_filter(waveform, 'lowpass', 7500)
+        """
         audio_np = waveform.numpy().squeeze()
 
         # Butter filter design
@@ -89,7 +174,22 @@ class AudioAugmenter:
         return torch.from_numpy(filtered).unsqueeze(0)
 
     def apply_random_augmentation(self, waveform):
-        """Apply a randomly selected augmentation technique."""
+        """
+        Apply a randomly selected augmentation technique or combination.
+        
+        This method selects 1-2 random augmentation techniques and applies them
+        to the input waveform, creating a unique augmented version.
+        
+        Args:
+            waveform (torch.Tensor): Input audio waveform
+            
+        Returns:
+            torch.Tensor: Augmented audio waveform
+            
+        Example:
+            >>> augmented = augmenter.apply_random_augmentation(waveform)
+            >>> augmenter.save_audio(augmented, "random_augmentation.wav")
+        """
         augmentation_techniques = [
             self.time_stretch,
             self.pitch_shift,
@@ -115,13 +215,42 @@ class PDVoiceAugmenter:
     """
     Specialized augmentation techniques that simulate voice characteristics
     associated with Parkinson's disease.
+    
+    This class provides methods to add vocal tremor, breathiness, reduced articulation,
+    and other characteristics commonly found in the speech of people with Parkinson's
+    disease. These augmentations can be used to expand datasets for machine learning
+    models focused on PD detection from voice.
+    
+    Attributes:
+        sample_rate (int): Target sample rate for all audio processing
+        
+    Example:
+        >>> pd_augmenter = PDVoiceAugmenter(sample_rate=16000)
+        >>> waveform = load_audio("healthy_voice.wav")
+        >>> pd_like_voice = pd_augmenter.apply_pd_augmentation(waveform)
+        >>> save_audio(pd_like_voice, "healthy_voice_with_pd_characteristics.wav")
     """
 
     def __init__(self, sample_rate=16000):
         self.sample_rate = sample_rate
 
     def ensure_length_match(self, processed_array, original_shape):
-        """Helper function to ensure processed arrays match original length."""
+        """
+        Helper function to ensure processed arrays match original length.
+        
+        Args:
+            processed_array (numpy.ndarray): Array after processing
+            original_shape (tuple): Shape of the original array
+            
+        Returns:
+            numpy.ndarray: Array adjusted to match the original length
+            
+        Example:
+            >>> original = np.random.rand(16000)
+            >>> processed = some_processing_function(original)  # Length might change
+            >>> matched = pd_augmenter.ensure_length_match(processed, original.shape)
+            >>> assert len(matched) == len(original)  # Lengths now match
+        """
         target_length = original_shape[0]
 
         if len(processed_array) > target_length:
@@ -131,13 +260,25 @@ class PDVoiceAugmenter:
             return np.concatenate([processed_array, padding])
         return processed_array
 
-    def add_tremor(
-        self, waveform, rate_range=(
-            4, 7), depth_range=(
-            0.005, 0.02)):
+    def add_tremor(self, waveform, rate_range=(4, 7), depth_range=(0.005, 0.02)):
         """
-        Add vocal tremor - amplitude modulation at 4-7 Hz,
-        a common symptom in Parkinson's disease.
+        Add vocal tremor - amplitude modulation at 4-7 Hz, a common symptom in Parkinson's disease.
+        
+        This simulates the rhythmic variation in voice amplitude that occurs in many
+        people with Parkinson's disease due to tremor affecting the vocal mechanism.
+        
+        Args:
+            waveform (torch.Tensor): Input audio waveform
+            rate_range (tuple of float, optional): Range of tremor frequency in Hz.
+                Defaults to (4, 7), which is the typical range for PD vocal tremor.
+            depth_range (tuple of float, optional): Range of tremor depth/intensity.
+                Defaults to (0.005, 0.02).
+                
+        Returns:
+            torch.Tensor: Audio waveform with added vocal tremor
+            
+        Example:
+            >>> tremor_voice = pd_augmenter.add_tremor(waveform, rate_range=(5, 6))
         """
         # Convert to numpy for processing
         audio_np = waveform.numpy().squeeze()
@@ -161,10 +302,25 @@ class PDVoiceAugmenter:
         # Convert back to tensor - make a copy to ensure positive strides
         return torch.from_numpy(modulated.copy()).unsqueeze(0)
 
-    def add_breathiness(self, waveform, noise_level_range=(0.01, 0.05)):
+    def add_tremor(self, waveform, rate_range=(4, 7), depth_range=(0.005, 0.02)):
         """
-        Add breathiness to voice - common in Parkinson's due to reduced
-        vocal fold closure and air escape during phonation.
+        Add vocal tremor - amplitude modulation at 4-7 Hz, a common symptom in Parkinson's disease.
+        
+        This simulates the rhythmic variation in voice amplitude that occurs in many
+        people with Parkinson's disease due to tremor affecting the vocal mechanism.
+        
+        Args:
+            waveform (torch.Tensor): Input audio waveform
+            rate_range (tuple of float, optional): Range of tremor frequency in Hz.
+                Defaults to (4, 7), which is the typical range for PD vocal tremor.
+            depth_range (tuple of float, optional): Range of tremor depth/intensity.
+                Defaults to (0.005, 0.02).
+                
+        Returns:
+            torch.Tensor: Audio waveform with added vocal tremor
+            
+        Example:
+            >>> tremor_voice = pd_augmenter.add_tremor(waveform, rate_range=(5, 6))
         """
         noise_level = random.uniform(*noise_level_range)
 
@@ -201,6 +357,20 @@ class PDVoiceAugmenter:
         """
         Simulate reduced articulation by applying mild low-pass filtering,
         which mimics the reduced precision in consonant production.
+        
+        People with Parkinson's often have less precise articulation, resulting
+        in less distinct consonants and blurred speech boundaries.
+        
+        Args:
+            waveform (torch.Tensor): Input audio waveform
+            factor_range (tuple of float, optional): Range of articulation reduction factor.
+                Lower values mean more articulation reduction. Defaults to (0.7, 0.9).
+                
+        Returns:
+            torch.Tensor: Audio waveform with reduced articulation clarity
+            
+        Example:
+            >>> reduced_articulation = pd_augmenter.reduce_articulation(waveform)
         """
         factor = random.uniform(*factor_range)
 
@@ -236,16 +406,27 @@ class PDVoiceAugmenter:
             print(f"Warning in reduce_articulation: {e}")
             return waveform
 
-    def jitter_shimmer(
-        self, waveform, jitter_range=(
-            0.005, 0.02), shimmer_range=(
-            0.04, 0.1)):
+    def jitter_shimmer(self, waveform, jitter_range=(0.005, 0.02), shimmer_range=(0.04, 0.1)):
         """
         Add jitter (pitch perturbation) and shimmer (amplitude perturbation),
         which are increased in Parkinson's disease voices.
+        
+        Jitter and shimmer are acoustic measures of voice instability that are
+        typically elevated in people with Parkinson's disease.
+        
+        Args:
+            waveform (torch.Tensor): Input audio waveform
+            jitter_range (tuple of float, optional): Range of pitch variation intensity.
+                Defaults to (0.005, 0.02).
+            shimmer_range (tuple of float, optional): Range of amplitude variation intensity.
+                Defaults to (0.04, 0.1).
+                
+        Returns:
+            torch.Tensor: Audio waveform with added jitter and shimmer
+            
+        Example:
+            >>> unstable_voice = pd_augmenter.jitter_shimmer(waveform)
         """
-        # This is a more complex operation that can fail in various ways
-        # We'll handle it with more care
 
         try:
             jitter_amount = random.uniform(*jitter_range)
@@ -277,7 +458,22 @@ class PDVoiceAugmenter:
             return waveform
 
     def apply_pd_augmentation(self, waveform):
-        """Apply random Parkinson's-related augmentations to the waveform."""
+        """
+        Apply random Parkinson's-related augmentations to the waveform.
+        
+        This method applies 1-2 randomly selected PD-specific voice characteristics
+        to simulate aspects of speech affected by Parkinson's disease.
+        
+        Args:
+            waveform (torch.Tensor): Input audio waveform
+            
+        Returns:
+            torch.Tensor: Audio waveform with PD speech characteristics
+            
+        Example:
+            >>> # Convert healthy voice to have PD characteristics
+            >>> pd_voice = pd_augmenter.apply_pd_augmentation(healthy_waveform)
+        """
         augmentation_techniques = [
             self.add_tremor,
             self.add_breathiness,
@@ -305,8 +501,23 @@ class PDVoiceAugmenter:
 def find_actual_data_root(data_dir, file_path):
     """
     Find the actual root directory containing the data based on the file path.
+    
     This helps with directory structure preservation when file paths in the manifest
     don't directly start with data_dir.
+    
+    Args:
+        data_dir (str): Base data directory provided as input
+        file_path (str): Path to an audio file from the manifest
+        
+    Returns:
+        str: The actual root directory that should be used to preserve structure
+        
+    Example:
+        >>> data_dir = "/data/parkinsons/audio"
+        >>> file_path = "/data/parkinsons/audio/control/subject1/recording.wav"
+        >>> root = find_actual_data_root(data_dir, file_path)
+        >>> print(root)
+        /data/parkinsons/audio
     """
     # Convert to absolute paths for comparison
     abs_data_dir = os.path.abspath(data_dir)
@@ -338,7 +549,23 @@ def find_actual_data_root(data_dir, file_path):
 
 
 def get_relative_path(file_path, base_dir):
-    """Get the relative path of a file from a base directory, preserving directory structure."""
+    """
+    Get the relative path of a file from a base directory, preserving directory structure.
+    
+    Args:
+        file_path (str): Path to the file
+        base_dir (str): Base directory to calculate relative path from
+        
+    Returns:
+        str: Relative path that preserves the original directory structure
+        
+    Example:
+        >>> file_path = "/data/audio/parkinsons/subject1/sample.wav"
+        >>> base_dir = "/data/audio"
+        >>> rel_path = get_relative_path(file_path, base_dir)
+        >>> print(rel_path)
+        parkinsons/subject1/sample.wav
+    """
     # Convert to absolute paths
     abs_file = os.path.abspath(file_path) if os.path.exists(
         file_path) else file_path
@@ -368,19 +595,46 @@ def get_relative_path(file_path, base_dir):
     return os.path.basename(file_path)
 
 
-def augment_dataset(
-        data_dir,
-        output_dir,
-        metadata_dir=None,
-        augmentation_factor=2):
+def augment_dataset(data_dir, output_dir, metadata_dir=None, augmentation_factor=2):
     """
     Augment the entire dataset and create new manifests, preserving original directory structure.
-
+    
+    This function loads audio files from the dataset, applies both general audio augmentations
+    and Parkinson's disease-specific voice augmentations, and saves the augmented files with
+    the same directory structure as the originals. It also creates updated manifest files
+    that include both original and augmented data.
+    
     Args:
-        data_dir: Directory containing the original dataset
-        output_dir: Directory to save augmented files
-        metadata_dir: Directory containing the original metadata/manifests
-        augmentation_factor: How many augmented versions to create per original file
+        data_dir (str): Directory containing the original dataset
+        output_dir (str): Directory to save augmented files
+        metadata_dir (str, optional): Directory containing the original metadata/manifests.
+            If None, no manifests will be generated. Defaults to None.
+        augmentation_factor (int, optional): How many augmented versions to create per 
+            original file. Defaults to 2.
+            
+    Returns:
+        None: Function saves augmented files and manifests to disk
+        
+    Example:
+        >>> augment_dataset(
+        ...     data_dir="original_dataset",
+        ...     output_dir="augmented_dataset",
+        ...     metadata_dir="original_manifests",
+        ...     augmentation_factor=3
+        ... )
+        Loading manifests: 100%|████████| 3/3 [00:01<00:00]
+        Loaded train manifest with 150 entries
+        Loaded valid manifest with 30 entries
+        Loaded test manifest with 20 entries
+        Augmenting training files: 100%|████████| 150/150 [05:23<00:00]
+        Saving augmented manifest...
+        Augmented training set: 150 original files + 450 augmented files = 600 total files
+          - PD samples: 300 augmented
+          - HC samples: 150 augmented
+        Copying evaluation manifests: 100%|████████| 2/2 [00:00<00:00]
+        Copied valid manifest: 30 files
+        Copied test manifest: 20 files
+        Dataset augmentation complete!
     """
     augmenter = AudioAugmenter(augmentation_factor=augmentation_factor)
     pd_augmenter = PDVoiceAugmenter()
