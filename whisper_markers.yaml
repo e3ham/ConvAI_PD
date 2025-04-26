@@ -1,0 +1,222 @@
+# # #################################
+# # Hyperparameters for Parkinson's disease detection with SpeechBrain's Whisper
+# # #################################
+# # Seed needs to be set at top of yaml, before objects with parameters are made
+# seed: 1986
+# __set_seed: !apply:torch.manual_seed [!ref <seed>]
+# # Output folders
+# output_folder: !ref results/models/whisper/<seed>
+# save_folder: !ref <output_folder>/save
+# train_log: !ref <output_folder>/train_log.txt
+# # Path where data manifest files are stored
+# data_folder: data/parkinson_data
+# train_annotation: !ref manifests/train.json
+# valid_annotation: !ref manifests/valid.json
+# test_annotation: !ref manifests/test.json
+# # Sample rate for audio processing
+# sample_rate: 16000
+# # The train logger writes training statistics to a file, as well as stdout
+# train_logger: !new:speechbrain.utils.train_logger.FileTrainLogger
+#   save_file: !ref <train_log>
+# # Error calculation
+# error_stats: !name:speechbrain.utils.metric_stats.MetricStats
+#   metric: !name:speechbrain.nnet.losses.classification_error
+# # Training Parameters
+# number_of_epochs: 10
+# batch_size: 8
+# lr: 0.0001
+# lr_ssl: 0.00001
+# freeze_ssl: True  # Default to freeze Whisper encoder
+# # Model Parameters
+# whisper_source: "openai/whisper-base"  # Options: openai/whisper-tiny, openai/whisper-base, openai/whisper-small, etc.
+# encoder_dim: 512  # Depends on the Whisper model size: tiny=384, base=512, small=768, medium=1024, large=1280
+# n_classes: 2
+
+# dataloader_options:
+#   batch_size: !ref <batch_size>
+#   shuffle: True
+#   num_workers: 2
+#   drop_last: False
+
+# # Whisper encoder from SpeechBrain
+# whisper: !new:speechbrain.lobes.models.huggingface_transformers.whisper.Whisper
+#   source: !ref <whisper_source>
+#   save_path: !ref <save_folder>/whisper
+#   encoder_only: True  # We only want encoder outputs for classification
+#   freeze: !ref <freeze_ssl> 
+#   output_all_hiddens: False
+
+# # Pooling layer - compute mean of whisper outputs (ignoring padded values)
+# avg_pool: !new:speechbrain.nnet.pooling.StatisticsPooling
+#   return_std: False
+
+# # Classifier
+# classifier: !new:speechbrain.nnet.linear.Linear
+#   input_size: !ref <encoder_dim>
+#   n_neurons: !ref <n_classes>
+#   bias: True
+
+# # Log softmax for output probabilities
+# log_softmax: !new:speechbrain.nnet.activations.Softmax
+#   apply_log: True
+
+# # Loss function
+# compute_cost: !name:speechbrain.nnet.losses.nll_loss
+
+# # Epoch counter for training
+# epoch_counter: !new:speechbrain.utils.epoch_loop.EpochCounter
+#   limit: !ref <number_of_epochs>
+
+# # Objects for the SpeechBrain HParams
+# modules:
+#   whisper: !ref <whisper>
+#   avg_pool: !ref <avg_pool>
+#   classifier: !ref <classifier>
+
+# # Model list for the checkpointer
+# model: !new:torch.nn.ModuleList
+#   - [!ref <classifier>]
+
+# # Optimizers
+# opt_class: !name:torch.optim.AdamW
+#   lr: !ref <lr>
+
+# ssl_opt_class: !name:torch.optim.AdamW
+#   lr: !ref <lr_ssl>
+#   weight_decay: 0.01
+
+# # Learning rate annealing for the output model
+# lr_annealing: !new:speechbrain.nnet.schedulers.NewBobScheduler
+#   initial_value: !ref <lr>
+#   improvement_threshold: 0.0025
+#   annealing_factor: 0.9
+#   patient: 0
+
+# # Learning rate for the Whisper encoder
+# lr_annealing_ssl: !new:speechbrain.nnet.schedulers.NewBobScheduler
+#   initial_value: !ref <lr_ssl>
+#   improvement_threshold: 0.0025
+#   annealing_factor: 0.9
+
+# # This object is used for saving the state of training
+# checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
+#   checkpoints_dir: !ref <save_folder>
+#   recoverables:
+#     model: !ref <model>
+#     whisper: !ref <whisper>
+#     lr_annealing: !ref <lr_annealing>
+#     lr_annealing_ssl: !ref <lr_annealing_ssl>
+#     counter: !ref <epoch_counter>
+
+# #################################
+# Hyperparameters for Parkinson's disease detection with SpeechBrain's Whisper
+# #################################
+# Seed needs to be set at top of yaml, before objects with parameters are made
+seed: 1986
+__set_seed: !apply:torch.manual_seed [!ref <seed>]
+# Output folders
+output_folder: !ref results/models/whisper/<seed>
+save_folder: !ref <output_folder>/save
+train_log: !ref <output_folder>/train_log.txt
+# Path where data manifest files are stored
+data_folder: data/parkinson_data
+train_annotation: !ref manifests/train.json
+valid_annotation: !ref manifests/valid.json
+test_annotation: !ref manifests/test.json
+# Sample rate for audio processing
+sample_rate: 16000
+# The train logger writes training statistics to a file, as well as stdout
+train_logger: !new:speechbrain.utils.train_logger.FileTrainLogger
+  save_file: !ref <train_log>
+# Error calculation
+error_stats: !name:speechbrain.utils.metric_stats.MetricStats
+  metric: !name:speechbrain.nnet.losses.classification_error
+# Training Parameters
+number_of_epochs: 10
+batch_size: 8
+lr: 0.0001
+lr_ssl: 0.00001
+freeze_ssl: True  # Default to freeze Whisper encoder
+# Model Parameters
+whisper_source: "openai/whisper-base"  # Options: openai/whisper-tiny, openai/whisper-base, openai/whisper-small, etc.
+encoder_dim: 512  # Depends on the Whisper model size: tiny=384, base=512, small=768, medium=1024, large=1280
+n_classes: 2
+
+dataloader_options:
+  batch_size: !ref <batch_size>
+  shuffle: True
+  num_workers: 2
+  drop_last: False
+
+# Whisper encoder from SpeechBrain
+whisper: !new:speechbrain.lobes.models.huggingface_transformers.whisper.Whisper
+  source: !ref <whisper_source>
+  save_path: !ref <save_folder>/whisper
+  encoder_only: True  # We only want encoder outputs for classification
+  freeze: !ref <freeze_ssl> 
+  output_all_hiddens: False
+
+# Pooling layer - compute mean of whisper outputs (ignoring padded values)
+avg_pool: !new:speechbrain.nnet.pooling.StatisticsPooling
+  return_std: False
+
+# Classifier
+classifier: !new:speechbrain.nnet.linear.Linear
+  input_size: !expr <encoder_dim> + 3
+  n_neurons: !ref <n_classes>
+  bias: True
+
+# Log softmax for output probabilities
+log_softmax: !new:speechbrain.nnet.activations.Softmax
+  apply_log: True
+
+# Loss function
+compute_cost: !name:speechbrain.nnet.losses.nll_loss
+
+# Epoch counter for training
+epoch_counter: !new:speechbrain.utils.epoch_loop.EpochCounter
+  limit: !ref <number_of_epochs>
+
+# Objects for the SpeechBrain HParams
+modules:
+  whisper: !ref <whisper>
+  avg_pool: !ref <avg_pool>
+  classifier: !ref <classifier>
+  ac_feats:   !new:speechbrain.lobes.models.AcousticFeatureExtractor
+    features: ["pitch","jitter_local","shimmer_local"]
+    sampling_rate: !ref <sample_rate>
+
+# Model list for the checkpointer
+model: !new:torch.nn.ModuleList
+  - [!ref <classifier>]
+
+# Optimizers
+opt_class: !name:torch.optim.AdamW
+  lr: !ref <lr>
+
+ssl_opt_class: !name:torch.optim.AdamW
+  lr: !ref <lr_ssl>
+  weight_decay: 0.01
+
+# Learning rate annealing for the output model
+lr_annealing: !new:speechbrain.nnet.schedulers.NewBobScheduler
+  initial_value: !ref <lr>
+  improvement_threshold: 0.0025
+  annealing_factor: 0.9
+  patient: 0
+
+# Learning rate for the Whisper encoder
+lr_annealing_ssl: !new:speechbrain.nnet.schedulers.NewBobScheduler
+  initial_value: !ref <lr_ssl>
+  improvement_threshold: 0.0025
+  annealing_factor: 0.9
+
+# This object is used for saving the state of training
+checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
+  checkpoints_dir: !ref <save_folder>
+  recoverables:
+    model: !ref <model>
+    whisper: !ref <whisper>
+    lr_annealing: !ref <lr_annealing>
+    lr_annealing_ssl: !ref <lr_annealing_ssl>
+    counter: !ref <epoch_counter>
