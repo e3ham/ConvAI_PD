@@ -16,13 +16,69 @@ from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, roc_curve,
 import parselmouth
 
 def compute_acoustic_feats(wav, length, sr):
-        arr = wav[:length].cpu().numpy()
-        snd = parselmouth.Sound(arr, sr)
+    """
+    Compute acoustic features from waveform data.
+    
+    Args:
+        wav (Tensor): Audio waveform
+        length (Tensor or float): Length of the audio to process
+        sr (int): Sampling rate
+        
+    Returns:
+        list: [pitch, jitter, shimmer] acoustic features
+    """
+    try:
+        # Convert tensor length to scalar if needed
+        if torch.is_tensor(length):
+            length = length.item()  # Convert to scalar
+        
+        # SpeechBrain might be passing relative lengths (0-1)
+        # If so, convert to actual sample count
+        if length <= 1.0:
+            abs_length = int(length * len(wav))
+        else:
+            abs_length = int(length)
+        
+        # Make sure length is valid
+        abs_length = min(abs_length, len(wav))
+        
+        # Get numpy array from the tensor
+        arr = wav[:abs_length].cpu().numpy()
+        
+        # Create parselmouth sound
+        snd = parselmouth.Sound(arr, sampling_frequency=sr)
+        
+        # Extract pitch - correct method
+        pitch = snd.to_pitch()
+        pitch_values = pitch.selected_array['frequency']
+        mean_pitch = 0.0
+        if len(pitch_values) > 0:
+            mean_pitch = float(np.mean(pitch_values[pitch_values > 0])) if np.any(pitch_values > 0) else 0.0
+        
+        # Extract jitter
+        point_process = parselmouth.praat.call([snd], "To PointProcess (periodic, cc)", 75, 600)
+        jitter = 0.0
+        try:
+            jitter = parselmouth.praat.call(point_process, "Get jitter (local)", 0, 0, 0.0001, 0.02, 1.3)
+        except:
+            pass
+        
+        # Extract shimmer
+        shimmer = 0.0
+        try:
+            shimmer = parselmouth.praat.call([snd, point_process], "Get shimmer (local)", 0, 0, 0.0001, 0.02, 1.3, 1.6)
+        except:
+            pass
+        
+        # Return features, ensuring all are valid float numbers
         return [
-        snd.to_pitch().get_mean(),
-        snd.to_jitter().jitter_local(),
-        snd.to_shimmer().shimmer_local()
+            float(mean_pitch) if mean_pitch is not None else 0.0,
+            float(jitter) if jitter is not None else 0.0,
+            float(shimmer) if shimmer is not None else 0.0
         ]
+    except Exception as e:
+        print(f"Error computing acoustic features: {e}")
+
 
 # Brain class for Parkinson detection using Whisper + acoustic features
 class ParkinsonBrain(sb.Brain):
