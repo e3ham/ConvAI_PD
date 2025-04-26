@@ -301,7 +301,7 @@ def update_all_manifests(manifest_dir, augmented_dir, output_dir):
         manifest_path = os.path.join(manifest_dir, f"{split}.json")
         if os.path.exists(manifest_path):
             output_path = os.path.join(
-                output_dir, f"{split}_with_augmentation.json")
+                output_dir, f"{split}.json")
             create_augmented_manifest(
                 manifest_path, augmented_dir, output_path)
 
